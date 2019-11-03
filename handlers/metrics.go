@@ -2,22 +2,14 @@ package handlers
 
 import (
 	"net/http"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	"github.com/ko-da-k/github-developer-exporter/exporter"
 )
 
-type MetricsHandler struct{}
-
 func NewMetricsHandler() http.Handler {
-	return &MetricsHandler{}
-}
+	exporter.RecordMetrics()
 
-func (h *MetricsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
-		return
-	}
-	errStatus := http.StatusMethodNotAllowed
-	w.WriteHeader(errStatus)
-	w.Write([]byte(http.StatusText(errStatus)))
-	return
+	return promhttp.Handler()
 }
