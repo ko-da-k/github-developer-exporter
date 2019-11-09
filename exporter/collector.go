@@ -2,9 +2,13 @@ package exporter
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"strings"
 
 	"github.com/google/go-github/v28/github"
 	"github.com/prometheus/client_golang/prometheus"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/oauth2"
 )
 
@@ -16,8 +20,6 @@ var (
 		"url",
 		"email",
 		"blog",
-		"has_organization_projects",
-		"has_repository_projects",
 		"created_at",
 		"upated_at",
 	}
@@ -142,7 +144,17 @@ type devCollector struct {
 }
 
 // NewGitHubClient returns
-func NewGitHubClient(ctx context.Context, token string, org string, baseURL string, uploadURL string) (*github.Client, error) {
+func newGitHubClient(ctx context.Context) (*github.Client, error) {
+	token := os.Getenv("GITHUB_TOKEN")
+	url := os.Getenv("GITHUB_URL")
+
+	if token == "" {
+		return nil, fmt.Errorf("token should be set in GITHIB_TOKEN environment value")
+	}
+	if url == "" {
+		url = "https://api.github.com/"
+	}
+
 	ts := oauth2.StaticTokenSource(
 		&oauth2.Token{
 			AccessToken: token,
@@ -151,18 +163,30 @@ func NewGitHubClient(ctx context.Context, token string, org string, baseURL stri
 	tc := oauth2.NewClient(ctx, ts)
 
 	// TODO: because I mainly use gh:e
-	client, err := github.NewEnterpriseClient(baseURL, uploadURL, tc)
+	client, err := github.NewEnterpriseClient(url, url, tc)
 	if err != nil {
 		return nil, err
 	}
 	return client, nil
 }
 
-func NewDevCollector() prometheus.Collector {
-	return &devCollector{
-		&github.Client{},
-		[]string{"octocat"},
+func NewDevCollector() (prometheus.Collector, error) {
+	ctx := context.Background()
+	c, err := newGitHubClient(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("client initialization error: %w", err)
 	}
+
+	orgs := strings.Split(os.Getenv("GITHUB_ORGS"), ",")
+
+	if orgs[0] == "" {
+		return nil, fmt.Errorf("organization name shoud be set in GITHUB_ORGS")
+	}
+
+	return &devCollector{
+		c,
+		orgs,
+	}, nil
 }
 
 func (c *devCollector) Describe(ch chan<- *prometheus.Desc) {
@@ -189,30 +213,90 @@ func (c *devCollector) Collect(ch chan<- prometheus.Metric) {
 	// check latest query successfully
 	if ok {
 		ch <- prometheus.MustNewConstMetric(
-			up, prometheus.GaugeValue, 1,
+			up, prometheus.GaugeValue, 1.0,
 		)
 	} else {
 		ch <- prometheus.MustNewConstMetric(
-			up, prometheus.GaugeValue, 0,
+			up, prometheus.GaugeValue, 0.0,
 		)
 	}
 }
 
 func (c *devCollector) collectOrgsMetrics(ch chan<- prometheus.Metric) bool {
-	ch <- prometheus.MustNewConstMetric(
-		orgInfo,
-		prometheus.GaugeValue,
-		1,
-		"login",
-		"name",
-		"url",
-		"email",
-		"blog",
-		"has_organization_projects",
-		"has_repository_projects",
-		"created_at",
-		"upated_at",
-	)
+	ctx := context.Background()
+	for _, orgName := range c.orgs {
+		org, _, err := c.client.Organizations.Get(ctx, orgName)
+		if _, ok := err.(*github.RateLimitError); ok {
+			log.Errorf("Access Rate Limit: %v", err)
+			return false
+		} else if err != nil {
+			log.Errorf("Failed to get %s org: %v", orgName, err)
+			return false
+		}
+		labels := []string{
+			org.GetLogin(),
+			org.GetName(),
+			org.GetURL(),
+			org.GetEmail(),
+			org.GetBlog(),
+			org.GetCreatedAt().String(),
+			org.GetUpdatedAt().String(),
+		}
+		ch <- prometheus.MustNewConstMetric(
+			orgInfo,
+			prometheus.GaugeValue,
+			1.0,
+			labels...,
+		)
+
+		repoOption := &github.RepositoryListByOrgOptions{
+			Type:        "all",
+			ListOptions: github.ListOptions{PerPage: 100},
+		}
+
+		var allRepos []*github.Repository
+		for {
+			repos, resp, err := c.client.Repositories.ListByOrg(ctx, orgName, repoOption)
+			if err != nil {
+				log.Errorf("failed to fetch repos: %v", err)
+				return false
+			}
+			allRepos = append(allRepos, repos...)
+			if resp.NextPage == 0 {
+				break
+			}
+			repoOption.Page = resp.NextPage
+
+		}
+
+		ch <- prometheus.MustNewConstMetric(
+			orgTotalReposCount,
+			prometheus.GaugeValue,
+			float64(len(allRepos)),
+			labels...,
+		)
+		publicCnt := 0.0
+		privateCnt := 0.0
+		for _, repo := range allRepos {
+			if repo.GetPrivate() {
+				privateCnt++
+			} else {
+				publicCnt++
+			}
+		}
+		ch <- prometheus.MustNewConstMetric(
+			orgPublicReposCount,
+			prometheus.GaugeValue,
+			publicCnt,
+			labels...,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			orgPrivateReposCount,
+			prometheus.GaugeValue,
+			privateCnt,
+			labels...,
+		)
+	}
 	return true
 }
 

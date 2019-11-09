@@ -5,6 +5,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+	log "github.com/sirupsen/logrus"
 )
 
 var (
@@ -15,7 +16,11 @@ var (
 )
 
 func RecordMetrics() {
-	c := NewDevCollector()
+	c, err := NewDevCollector()
+	if err != nil {
+		log.Errorf("Collector Initialization Error: %v", err)
+		return
+	}
 	prometheus.MustRegister(c)
 
 	go func() {
