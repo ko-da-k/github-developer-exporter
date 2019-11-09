@@ -12,18 +12,12 @@ var (
 		Name: "myapp_processed_ops_total",
 		Help: "The total number of processed events",
 	})
-	repoGauge = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Name: "repository_count",
-			Help: "Number of repositories",
-		},
-		[]string{"device"},
-	)
 )
 
 func RecordMetrics() {
-	prometheus.MustRegister(repoGauge)
-	repoGauge.WithLabelValues("deviceA").Set(10)
+	c := NewDevCollector()
+	prometheus.MustRegister(c)
+
 	go func() {
 		for {
 			opsProcessed.Inc()
