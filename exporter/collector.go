@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/google/go-github/v28/github"
+	cache "github.com/patrickmn/go-cache"
 	"github.com/prometheus/client_golang/prometheus"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/oauth2"
@@ -141,6 +143,7 @@ var (
 type devCollector struct {
 	client *github.Client
 	orgs   []string
+	gcache *cache.Cache
 }
 
 // NewGitHubClient returns
@@ -183,9 +186,13 @@ func NewDevCollector() (prometheus.Collector, error) {
 		return nil, fmt.Errorf("organization name shoud be set in GITHUB_ORGS")
 	}
 
+	// cache
+	ch := cache.New(30*time.Minute, 45*time.Minute)
+
 	return &devCollector{
 		c,
 		orgs,
+		ch,
 	}, nil
 }
 
@@ -255,18 +262,23 @@ func (c *devCollector) collectOrgsMetrics(ch chan<- prometheus.Metric) bool {
 		}
 
 		var allRepos []*github.Repository
-		for {
-			repos, resp, err := c.client.Repositories.ListByOrg(ctx, orgName, repoOption)
-			if err != nil {
-				log.Errorf("failed to fetch repos: %v", err)
-				return false
-			}
-			allRepos = append(allRepos, repos...)
-			if resp.NextPage == 0 {
-				break
-			}
-			repoOption.Page = resp.NextPage
+		ri, found := c.gcache.Get("repos")
+		allRepos, ok := ri.([]*github.Repository)
+		if !found || !ok {
+			for {
+				repos, resp, err := c.client.Repositories.ListByOrg(ctx, orgName, repoOption)
+				if err != nil {
+					log.Errorf("failed to fetch repos: %v", err)
+					return false
+				}
+				allRepos = append(allRepos, repos...)
+				if resp.NextPage == 0 {
+					break
+				}
+				repoOption.Page = resp.NextPage
 
+			}
+			c.gcache.Set("repos", allRepos, cache.DefaultExpiration)
 		}
 
 		ch <- prometheus.MustNewConstMetric(
