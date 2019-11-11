@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -51,6 +52,7 @@ var (
 		"merged_at",
 		"asignee",
 		"reviewer",
+		"label",
 	}
 
 	// prometheus description
@@ -313,42 +315,122 @@ func (c *devCollector) collectOrgsMetrics(ch chan<- prometheus.Metric) bool {
 }
 
 func (c *devCollector) collectReposMetrics(ch chan<- prometheus.Metric) bool {
-	ch <- prometheus.MustNewConstMetric(
-		repoInfo,
-		prometheus.GaugeValue,
-		1,
-		"org_name",
-		"name",
-		"full_name",
-		"owner",
-		"url",
-		"default_branch",
-		"archived",
-		"language",
-		"latest_release_tag_name",
-		"latest_released_at",
-		"created_at",
-		"updated_at",
-		"pushed_at",
-	)
+	ri, found := c.gcache.Get("repos")
+	allRepos, ok := ri.([]*github.Repository)
+	if !found || !ok {
+		log.Errorf("failed to fetch repos from cache")
+		return false
+	}
+	for _, repo := range allRepos {
+		labels := []string{
+			repo.GetOrganization().GetLogin(),
+			repo.GetName(),
+			repo.GetFullName(),
+			repo.GetOwner().GetLogin(),
+			repo.GetURL(),
+			repo.GetDefaultBranch(),
+			strconv.FormatBool(repo.GetArchived()),
+			repo.GetLanguage(),
+			"latest_release_tag_name",
+			"latest_release_at",
+			repo.GetCreatedAt().String(),
+			repo.GetUpdatedAt().String(),
+			repo.GetPushedAt().String(),
+		}
+		ch <- prometheus.MustNewConstMetric(
+			repoInfo,
+			prometheus.GaugeValue,
+			1.0,
+			labels...,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			repoOpenIssueCount,
+			prometheus.GaugeValue,
+			float64(repo.GetOpenIssuesCount()),
+			labels...,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			repoCollaboratorCount,
+			prometheus.GaugeValue,
+			1.0, // TODO
+			labels...,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			repoReleaseCount,
+			prometheus.GaugeValue,
+			1.0, // TODO
+			labels...,
+		)
+	}
 	return true
 }
 
 func (c *devCollector) collectPullsMetrics(ch chan<- prometheus.Metric) bool {
-	ch <- prometheus.MustNewConstMetric(
-		pullsInfo,
-		prometheus.GaugeValue,
-		1,
-		"org_name",
-		"repo_name",
-		"state",
-		"title",
-		"created_at",
-		"updated_at",
-		"closed_at",
-		"merged_at",
-		"asignee",
-		"reviewer",
-	)
-	return true
+	isSuccess := true
+	ctx := context.Background()
+	ri, found := c.gcache.Get("repos")
+	allRepos, ok := ri.([]*github.Repository)
+	if !found || !ok {
+		log.Errorf("failed to fetch repos from cache")
+		return false
+	}
+	prListOption := &github.PullRequestListOptions{
+		State:     "all",
+		Head:      "",
+		Base:      "",
+		Sort:      "updated",
+		Direction: "desc",
+	}
+	for _, repo := range allRepos {
+		prs, _, err := c.client.PullRequests.List(ctx, repo.GetOrganization().GetLogin(), repo.GetName(), prListOption)
+		if _, ok := err.(*github.RateLimitError); ok {
+			log.Errorf("Access Rate Limit: %v", err)
+			return false
+		} else if err != nil {
+			log.Errorf("Failed to fetch %s pulls: %v", repo.GetName(), err)
+			isSuccess = false
+		}
+		for _, pr := range prs {
+			for _, label := range pr.Labels {
+				labels := []string{
+					repo.GetOrganization().GetLogin(),
+					repo.GetName(),
+					pr.GetState(),
+					pr.GetTitle(),
+					pr.GetCreatedAt().String(),
+					pr.GetUpdatedAt().String(),
+					pr.GetClosedAt().String(),
+					pr.GetMergedAt().String(),
+					pr.GetAssignee().GetLogin(),
+					label.String(),
+				}
+				ch <- prometheus.MustNewConstMetric(
+					pullsInfo,
+					prometheus.GaugeValue,
+					1.0,
+					labels...,
+				)
+			}
+			// use "" if you would query for all pulls/
+			labels := []string{
+				repo.GetOrganization().GetLogin(),
+				repo.GetName(),
+				pr.GetState(),
+				pr.GetTitle(),
+				pr.GetCreatedAt().String(),
+				pr.GetUpdatedAt().String(),
+				pr.GetClosedAt().String(),
+				pr.GetMergedAt().String(),
+				pr.GetAssignee().GetLogin(),
+				"",
+			}
+			ch <- prometheus.MustNewConstMetric(
+				pullsInfo,
+				prometheus.GaugeValue,
+				1.0,
+				labels...,
+			)
+		}
+	}
+	return isSuccess
 }
