@@ -386,27 +386,36 @@ func (c *devCollector) collectPullsMetrics(ch chan<- prometheus.Metric) bool {
 	}
 	for _, repo := range allRepos {
 		owner := repo.GetOwner()
-		prs, _, err := c.client.PullRequests.List(ctx, owner.GetLogin(), repo.GetName(), prListOption)
-		if _, ok := err.(*github.RateLimitError); ok {
-			log.Errorf("Access Rate Limit: %v", err)
-			return false
-		} else if err != nil {
-			log.Errorf("Failed to fetch %s pulls: %v", repo.GetName(), err)
-			isSuccess = false
+		orgName := owner.GetLogin()
+		repoName := repo.GetName()
+
+		var pulls []*github.PullRequest
+		pri, found := c.gcache.Get(fmt.Sprintf("%s-pulls", repoName))
+		pulls, ok = pri.([]*github.PullRequest)
+		if !found || !ok {
+			pulls, _, err := c.client.PullRequests.List(ctx, orgName, repoName, prListOption)
+			if _, ok := err.(*github.RateLimitError); ok {
+				log.Errorf("Access Rate Limit: %v", err)
+				return false
+			} else if err != nil {
+				log.Errorf("Failed to fetch %s pulls: %v", repo.GetName(), err)
+				isSuccess = false
+			}
+			c.gcache.Set(fmt.Sprintf("%s-pulls", repoName), pulls, cache.DefaultExpiration)
 		}
-		for _, pr := range prs {
-			for _, label := range pr.Labels {
+		for _, pull := range pulls {
+			for _, label := range pull.Labels {
 				labels := []string{
-					owner.GetLogin(),
-					repo.GetName(),
-					pr.GetState(),
-					pr.GetTitle(),
-					pr.GetCreatedAt().String(),
-					pr.GetUpdatedAt().String(),
-					pr.GetClosedAt().String(),
-					pr.GetMergedAt().String(),
-					pr.GetAssignee().GetLogin(),
-					label.String(),
+					orgName,
+					repoName,
+					pull.GetState(),
+					pull.GetTitle(),
+					pull.GetCreatedAt().String(),
+					pull.GetUpdatedAt().String(),
+					pull.GetClosedAt().String(),
+					pull.GetMergedAt().String(),
+					pull.GetAssignee().GetLogin(),
+					label.GetName(),
 				}
 				ch <- prometheus.MustNewConstMetric(
 					pullsInfo,
@@ -419,13 +428,13 @@ func (c *devCollector) collectPullsMetrics(ch chan<- prometheus.Metric) bool {
 			labels := []string{
 				owner.GetLogin(),
 				repo.GetName(),
-				pr.GetState(),
-				pr.GetTitle(),
-				pr.GetCreatedAt().String(),
-				pr.GetUpdatedAt().String(),
-				pr.GetClosedAt().String(),
-				pr.GetMergedAt().String(),
-				pr.GetAssignee().GetLogin(),
+				pull.GetState(),
+				pull.GetTitle(),
+				pull.GetCreatedAt().String(),
+				pull.GetUpdatedAt().String(),
+				pull.GetClosedAt().String(),
+				pull.GetMergedAt().String(),
+				pull.GetAssignee().GetLogin(),
 				"",
 			}
 			ch <- prometheus.MustNewConstMetric(
