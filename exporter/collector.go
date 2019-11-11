@@ -51,7 +51,6 @@ var (
 		"closed_at",
 		"merged_at",
 		"asignee",
-		"reviewer",
 		"label",
 	}
 
@@ -382,7 +381,8 @@ func (c *devCollector) collectPullsMetrics(ch chan<- prometheus.Metric) bool {
 		Direction: "desc",
 	}
 	for _, repo := range allRepos {
-		prs, _, err := c.client.PullRequests.List(ctx, repo.GetOrganization().GetLogin(), repo.GetName(), prListOption)
+		owner := repo.GetOwner()
+		prs, _, err := c.client.PullRequests.List(ctx, owner.GetLogin(), repo.GetName(), prListOption)
 		if _, ok := err.(*github.RateLimitError); ok {
 			log.Errorf("Access Rate Limit: %v", err)
 			return false
@@ -393,7 +393,7 @@ func (c *devCollector) collectPullsMetrics(ch chan<- prometheus.Metric) bool {
 		for _, pr := range prs {
 			for _, label := range pr.Labels {
 				labels := []string{
-					repo.GetOrganization().GetLogin(),
+					owner.GetLogin(),
 					repo.GetName(),
 					pr.GetState(),
 					pr.GetTitle(),
@@ -413,7 +413,7 @@ func (c *devCollector) collectPullsMetrics(ch chan<- prometheus.Metric) bool {
 			}
 			// use "" if you would query for all pulls/
 			labels := []string{
-				repo.GetOrganization().GetLogin(),
+				owner.GetLogin(),
 				repo.GetName(),
 				pr.GetState(),
 				pr.GetTitle(),
