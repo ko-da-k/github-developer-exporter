@@ -379,6 +379,10 @@ func (c *devCollector) collectPullsMetrics(ch chan<- prometheus.Metric) bool {
 		Base:      "",
 		Sort:      "updated",
 		Direction: "desc",
+		ListOptions: github.ListOptions{
+			Page:    1,
+			PerPage: 30, // Limited
+		},
 	}
 	for _, repo := range allRepos {
 		owner := repo.GetOwner()
