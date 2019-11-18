@@ -25,7 +25,7 @@ docker-build:
 	docker build -t $(DOCKER_IMAGE) .
 
 docker-run:
-	docker run --rm -p 8888:8888 -e PORT=$(PORT) $(DOCKER_IMAGE)
+	docker run -p 8888:8888 -e PORT=$(PORT) $(DOCKER_IMAGE)
 
 compose:
 	docker-compose -f ./local/docker-compose.yml up

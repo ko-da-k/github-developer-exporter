@@ -19,5 +19,6 @@ services:
     container_name: github-developer-exporter
     ports:
       - 9898:8888
+      - 8888
     env_file:
       - exporter.env
