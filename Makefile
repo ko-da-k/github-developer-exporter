@@ -29,6 +29,7 @@ docker-run:
 
 compose:
 	docker-compose -f ./local/docker-compose.yml up
+
 test:
 	# without infrastructure layer
 	$(GOCMD) test -v -bench=. ./interfaces/handlers ./domain/... -benchmem
