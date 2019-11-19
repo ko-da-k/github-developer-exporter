@@ -85,24 +85,6 @@ var (
 		orgLabels,
 		nil,
 	)
-	orgTotalGistCount = prometheus.NewDesc(
-		"org_total_gist_count",
-		"How many gists are in the organization.",
-		orgLabels,
-		nil,
-	)
-	orgPublicGistCount = prometheus.NewDesc(
-		"org_public_gist_count",
-		"How many public gists are in the organization.",
-		orgLabels,
-		nil,
-	)
-	orgPrivateGistCount = prometheus.NewDesc(
-		"org_private_gist_count",
-		"How many private gists are in the organization.",
-		orgLabels,
-		nil,
-	)
 	orgMemberCount = prometheus.NewDesc(
 		"org_member_count",
 		"How many private gists are in the organization.",
@@ -202,9 +184,6 @@ func (c *devCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- orgTotalReposCount
 	ch <- orgPublicReposCount
 	ch <- orgPrivateReposCount
-	ch <- orgTotalGistCount
-	ch <- orgPublicGistCount
-	ch <- orgPrivateGistCount
 	ch <- orgMemberCount
 	ch <- repoInfo
 	ch <- repoOpenIssueCount
@@ -309,6 +288,36 @@ func (c *devCollector) collectOrgsMetrics(ch chan<- prometheus.Metric) bool {
 			privateCnt,
 			labels...,
 		)
+
+		// fetch members list
+		memberOption := &github.ListMembersOptions{
+			ListOptions: github.ListOptions{PerPage: 100},
+		}
+		var allMembers []*github.User
+		ui, found := c.gcache.Get("members")
+		allMembers, ok = ui.([]*github.User)
+		if !found || !ok {
+			for {
+				members, resp, err := c.client.Organizations.ListMembers(ctx, orgName, memberOption)
+				if err != nil {
+					log.Errorf("failed to fetch members: %v", err)
+					return false
+				}
+				allMembers = append(allMembers, members...)
+				if resp.NextPage == 0 {
+					break
+				}
+				memberOption.Page = resp.NextPage
+
+			}
+			c.gcache.Set("users", allMembers, cache.DefaultExpiration)
+		}
+		ch <- prometheus.MustNewConstMetric(
+			orgMemberCount,
+			prometheus.GaugeValue,
+			float64(len(allMembers)),
+			labels...,
+		)
 	}
 	return true
 }
@@ -381,7 +390,7 @@ func (c *devCollector) collectPullsMetrics(ch chan<- prometheus.Metric) bool {
 		Direction: "desc",
 		ListOptions: github.ListOptions{
 			Page:    1,
-			PerPage: 30, // Limited
+			PerPage: 15, // Limited
 		},
 	}
 	for _, repo := range allRepos {
