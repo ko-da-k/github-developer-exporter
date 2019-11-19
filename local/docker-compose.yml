@@ -1,0 +1,25 @@
+version: '3'
+services:
+  grafana:
+    image: grafana/grafana
+    container_name: grafana
+    ports:
+      - 3000:3000
+    env_file:
+      - ./grafana.env
+  prometheus:
+    image: prom/prometheus
+    container_name: prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - 9090:9090
+      - 9090
+  github-developer-exporter:
+    image: github-developer-exporter:0.1.0
+    container_name: github-developer-exporter
+    ports:
+      - 9898:8888
+      - 8888
+    env_file:
+      - exporter.env
