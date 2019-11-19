@@ -1,12 +1,5 @@
 version: '3'
 services:
-  prometheus:
-    image: prom/prometheus
-    container_name: prometheus
-    volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml
-    ports:
-      - 9090:9090
   grafana:
     image: grafana/grafana
     container_name: grafana
@@ -14,6 +7,14 @@ services:
       - 3000:3000
     env_file:
       - ./grafana.env
+  prometheus:
+    image: prom/prometheus
+    container_name: prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - 9090:9090
+      - 9090
   github-developer-exporter:
     image: github-developer-exporter:0.1.0
     container_name: github-developer-exporter
