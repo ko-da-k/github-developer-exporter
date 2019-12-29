@@ -1,18 +1,10 @@
 package exporter
 
 import (
-	"context"
-	"fmt"
-	"os"
-	"strconv"
-	"strings"
-	"time"
-
 	"github.com/google/go-github/v28/github"
-	cache "github.com/patrickmn/go-cache"
 	"github.com/prometheus/client_golang/prometheus"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/oauth2"
+	"strconv"
 )
 
 var (
@@ -24,7 +16,7 @@ var (
 		"email",
 		"blog",
 		"created_at",
-		"upated_at",
+		"updated_at",
 	}
 	repoLabels = []string{
 		"org_name",
@@ -50,7 +42,7 @@ var (
 		"updated_at",
 		"closed_at",
 		"merged_at",
-		"asignee",
+		"assignee",
 		"label",
 	}
 
@@ -82,30 +74,6 @@ var (
 	orgPrivateReposCount = prometheus.NewDesc(
 		"org_private_repos_count",
 		"How many private repositories are in the organization.",
-		orgLabels,
-		nil,
-	)
-	orgTotalGistCount = prometheus.NewDesc(
-		"org_total_gist_count",
-		"How many gists are in the organization.",
-		orgLabels,
-		nil,
-	)
-	orgPublicGistCount = prometheus.NewDesc(
-		"org_public_gist_count",
-		"How many public gists are in the organization.",
-		orgLabels,
-		nil,
-	)
-	orgPrivateGistCount = prometheus.NewDesc(
-		"org_private_gist_count",
-		"How many private gists are in the organization.",
-		orgLabels,
-		nil,
-	)
-	orgMemberCount = prometheus.NewDesc(
-		"org_member_count",
-		"How many private gists are in the organization.",
 		orgLabels,
 		nil,
 	)
@@ -142,59 +110,11 @@ var (
 )
 
 type devCollector struct {
-	client *github.Client
-	orgs   []string
-	gcache *cache.Cache
+	gs []*GitHubCollector
 }
 
-// NewGitHubClient returns
-func newGitHubClient(ctx context.Context) (*github.Client, error) {
-	token := os.Getenv("GITHUB_TOKEN")
-	url := os.Getenv("GITHUB_URL")
-
-	if token == "" {
-		return nil, fmt.Errorf("token should be set in GITHIB_TOKEN environment value")
-	}
-	if url == "" {
-		url = "https://api.github.com/"
-	}
-
-	ts := oauth2.StaticTokenSource(
-		&oauth2.Token{
-			AccessToken: token,
-		},
-	)
-	tc := oauth2.NewClient(ctx, ts)
-
-	// TODO: because I mainly use gh:e
-	client, err := github.NewEnterpriseClient(url, url, tc)
-	if err != nil {
-		return nil, err
-	}
-	return client, nil
-}
-
-func NewDevCollector() (prometheus.Collector, error) {
-	ctx := context.Background()
-	c, err := newGitHubClient(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("client initialization error: %w", err)
-	}
-
-	orgs := strings.Split(os.Getenv("GITHUB_ORGS"), ",")
-
-	if orgs[0] == "" {
-		return nil, fmt.Errorf("organization name shoud be set in GITHUB_ORGS")
-	}
-
-	// cache
-	ch := cache.New(30*time.Minute, 45*time.Minute)
-
-	return &devCollector{
-		c,
-		orgs,
-		ch,
-	}, nil
+func NewDevCollector(gs []*GitHubCollector) prometheus.Collector {
+	return &devCollector{gs}
 }
 
 func (c *devCollector) Describe(ch chan<- *prometheus.Desc) {
@@ -202,10 +122,6 @@ func (c *devCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- orgTotalReposCount
 	ch <- orgPublicReposCount
 	ch <- orgPrivateReposCount
-	ch <- orgTotalGistCount
-	ch <- orgPublicGistCount
-	ch <- orgPrivateGistCount
-	ch <- orgMemberCount
 	ch <- repoInfo
 	ch <- repoOpenIssueCount
 	ch <- repoCollaboratorCount
@@ -215,8 +131,6 @@ func (c *devCollector) Describe(ch chan<- *prometheus.Desc) {
 
 func (c *devCollector) Collect(ch chan<- prometheus.Metric) {
 	ok := c.collectOrgsMetrics(ch)
-	ok = c.collectReposMetrics(ch) && ok
-	ok = c.collectPullsMetrics(ch) && ok
 
 	// check latest query successfully
 	if ok {
@@ -230,15 +144,12 @@ func (c *devCollector) Collect(ch chan<- prometheus.Metric) {
 	}
 }
 
+// collectOrgsMetrics fetch data from cache and calculate prometheus metrics
 func (c *devCollector) collectOrgsMetrics(ch chan<- prometheus.Metric) bool {
-	ctx := context.Background()
-	for _, orgName := range c.orgs {
-		org, _, err := c.client.Organizations.Get(ctx, orgName)
-		if _, ok := err.(*github.RateLimitError); ok {
-			log.Errorf("Access Rate Limit: %v", err)
-			return false
-		} else if err != nil {
-			log.Errorf("Failed to get %s org: %v", orgName, err)
+	for _, g := range c.gs {
+		org, err := g.GetOrg()
+		if err != nil {
+			log.Errorf("%s data not found", g.org)
 			return false
 		}
 		labels := []string{
@@ -257,44 +168,33 @@ func (c *devCollector) collectOrgsMetrics(ch chan<- prometheus.Metric) bool {
 			labels...,
 		)
 
-		repoOption := &github.RepositoryListByOrgOptions{
-			Type:        "all",
-			ListOptions: github.ListOptions{PerPage: 100},
+		repos, err := g.GetReposByOrg()
+		if err != nil {
+			log.Errorf("%s repos not found", g.org)
+			return false
 		}
-
-		var allRepos []*github.Repository
-		ri, found := c.gcache.Get("repos")
-		allRepos, ok := ri.([]*github.Repository)
-		if !found || !ok {
-			for {
-				repos, resp, err := c.client.Repositories.ListByOrg(ctx, orgName, repoOption)
-				if err != nil {
-					log.Errorf("failed to fetch repos: %v", err)
-					return false
-				}
-				allRepos = append(allRepos, repos...)
-				if resp.NextPage == 0 {
-					break
-				}
-				repoOption.Page = resp.NextPage
-
-			}
-			c.gcache.Set("repos", allRepos, cache.DefaultExpiration)
-		}
-
 		ch <- prometheus.MustNewConstMetric(
 			orgTotalReposCount,
 			prometheus.GaugeValue,
-			float64(len(allRepos)),
+			float64(len(repos)),
 			labels...,
 		)
 		publicCnt := 0.0
 		privateCnt := 0.0
-		for _, repo := range allRepos {
+		for _, repo := range repos {
 			if repo.GetPrivate() {
 				privateCnt++
 			} else {
 				publicCnt++
+			}
+			c.setRepoMetrics(ch, repo)
+
+			pulls, err := g.GetPullsByRepo(repo.GetName())
+			if err != nil {
+				log.Errorf("%s/%s pull requests not found", g.org, repo.GetName())
+			}
+			for _, pull := range pulls {
+				c.setPullRequestMetrics(ch, g, repo.GetName(), pull)
 			}
 		}
 		ch <- prometheus.MustNewConstMetric(
@@ -313,137 +213,87 @@ func (c *devCollector) collectOrgsMetrics(ch chan<- prometheus.Metric) bool {
 	return true
 }
 
-func (c *devCollector) collectReposMetrics(ch chan<- prometheus.Metric) bool {
-	ri, found := c.gcache.Get("repos")
-	allRepos, ok := ri.([]*github.Repository)
-	if !found || !ok {
-		log.Errorf("failed to fetch repos from cache")
-		return false
+func (c *devCollector) setRepoMetrics(ch chan<- prometheus.Metric, repo *github.Repository) {
+	// set metrics
+	labels := []string{
+		repo.GetOrganization().GetLogin(),
+		repo.GetName(),
+		repo.GetFullName(),
+		repo.GetOwner().GetLogin(),
+		repo.GetURL(),
+		repo.GetDefaultBranch(),
+		strconv.FormatBool(repo.GetArchived()),
+		repo.GetLanguage(),
+		"latest_release_tag_name",
+		"latest_release_at",
+		repo.GetCreatedAt().String(),
+		repo.GetUpdatedAt().String(),
+		repo.GetPushedAt().String(),
 	}
-	for _, repo := range allRepos {
+	ch <- prometheus.MustNewConstMetric(
+		repoInfo,
+		prometheus.GaugeValue,
+		1.0,
+		labels...,
+	)
+	ch <- prometheus.MustNewConstMetric(
+		repoOpenIssueCount,
+		prometheus.GaugeValue,
+		float64(repo.GetOpenIssuesCount()),
+		labels...,
+	)
+	ch <- prometheus.MustNewConstMetric(
+		repoCollaboratorCount,
+		prometheus.GaugeValue,
+		1.0, // TODO
+		labels...,
+	)
+	ch <- prometheus.MustNewConstMetric(
+		repoReleaseCount,
+		prometheus.GaugeValue,
+		1.0, // TODO
+		labels...,
+	)
+}
+
+func (c *devCollector) setPullRequestMetrics(ch chan<- prometheus.Metric, g *GitHubCollector, repoName string, pull *github.PullRequest) {
+	for _, label := range pull.Labels {
 		labels := []string{
-			repo.GetOrganization().GetLogin(),
-			repo.GetName(),
-			repo.GetFullName(),
-			repo.GetOwner().GetLogin(),
-			repo.GetURL(),
-			repo.GetDefaultBranch(),
-			strconv.FormatBool(repo.GetArchived()),
-			repo.GetLanguage(),
-			"latest_release_tag_name",
-			"latest_release_at",
-			repo.GetCreatedAt().String(),
-			repo.GetUpdatedAt().String(),
-			repo.GetPushedAt().String(),
+			g.org,
+			repoName,
+			pull.GetState(),
+			pull.GetTitle(),
+			pull.GetCreatedAt().String(),
+			pull.GetUpdatedAt().String(),
+			pull.GetClosedAt().String(),
+			pull.GetMergedAt().String(),
+			pull.GetAssignee().GetLogin(),
+			label.GetName(),
 		}
 		ch <- prometheus.MustNewConstMetric(
-			repoInfo,
+			pullsInfo,
 			prometheus.GaugeValue,
 			1.0,
 			labels...,
 		)
-		ch <- prometheus.MustNewConstMetric(
-			repoOpenIssueCount,
-			prometheus.GaugeValue,
-			float64(repo.GetOpenIssuesCount()),
-			labels...,
-		)
-		ch <- prometheus.MustNewConstMetric(
-			repoCollaboratorCount,
-			prometheus.GaugeValue,
-			1.0, // TODO
-			labels...,
-		)
-		ch <- prometheus.MustNewConstMetric(
-			repoReleaseCount,
-			prometheus.GaugeValue,
-			1.0, // TODO
-			labels...,
-		)
 	}
-	return true
-}
-
-func (c *devCollector) collectPullsMetrics(ch chan<- prometheus.Metric) bool {
-	isSuccess := true
-	ctx := context.Background()
-	ri, found := c.gcache.Get("repos")
-	allRepos, ok := ri.([]*github.Repository)
-	if !found || !ok {
-		log.Errorf("failed to fetch repos from cache")
-		return false
+	// use "" if you would query for all pulls/
+	labels := []string{
+		g.org,
+		repoName,
+		pull.GetState(),
+		pull.GetTitle(),
+		pull.GetCreatedAt().String(),
+		pull.GetUpdatedAt().String(),
+		pull.GetClosedAt().String(),
+		pull.GetMergedAt().String(),
+		pull.GetAssignee().GetLogin(),
+		"",
 	}
-	prListOption := &github.PullRequestListOptions{
-		State:     "all",
-		Head:      "",
-		Base:      "",
-		Sort:      "updated",
-		Direction: "desc",
-		ListOptions: github.ListOptions{
-			Page:    1,
-			PerPage: 30, // Limited
-		},
-	}
-	for _, repo := range allRepos {
-		owner := repo.GetOwner()
-		orgName := owner.GetLogin()
-		repoName := repo.GetName()
-
-		var pulls []*github.PullRequest
-		pri, found := c.gcache.Get(fmt.Sprintf("%s-pulls", repoName))
-		pulls, ok = pri.([]*github.PullRequest)
-		if !found || !ok {
-			pulls, _, err := c.client.PullRequests.List(ctx, orgName, repoName, prListOption)
-			if _, ok := err.(*github.RateLimitError); ok {
-				log.Errorf("Access Rate Limit: %v", err)
-				return false
-			} else if err != nil {
-				log.Errorf("Failed to fetch %s pulls: %v", repo.GetName(), err)
-				isSuccess = false
-			}
-			c.gcache.Set(fmt.Sprintf("%s-pulls", repoName), pulls, cache.DefaultExpiration)
-		}
-		for _, pull := range pulls {
-			for _, label := range pull.Labels {
-				labels := []string{
-					orgName,
-					repoName,
-					pull.GetState(),
-					pull.GetTitle(),
-					pull.GetCreatedAt().String(),
-					pull.GetUpdatedAt().String(),
-					pull.GetClosedAt().String(),
-					pull.GetMergedAt().String(),
-					pull.GetAssignee().GetLogin(),
-					label.GetName(),
-				}
-				ch <- prometheus.MustNewConstMetric(
-					pullsInfo,
-					prometheus.GaugeValue,
-					1.0,
-					labels...,
-				)
-			}
-			// use "" if you would query for all pulls/
-			labels := []string{
-				owner.GetLogin(),
-				repo.GetName(),
-				pull.GetState(),
-				pull.GetTitle(),
-				pull.GetCreatedAt().String(),
-				pull.GetUpdatedAt().String(),
-				pull.GetClosedAt().String(),
-				pull.GetMergedAt().String(),
-				pull.GetAssignee().GetLogin(),
-				"",
-			}
-			ch <- prometheus.MustNewConstMetric(
-				pullsInfo,
-				prometheus.GaugeValue,
-				1.0,
-				labels...,
-			)
-		}
-	}
-	return isSuccess
+	ch <- prometheus.MustNewConstMetric(
+		pullsInfo,
+		prometheus.GaugeValue,
+		1.0,
+		labels...,
+	)
 }

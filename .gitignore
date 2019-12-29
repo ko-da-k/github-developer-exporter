@@ -12,6 +12,7 @@
 *.out
 
 .vscode
+.idea
 
 debug
 app

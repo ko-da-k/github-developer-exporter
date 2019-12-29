@@ -8,8 +8,8 @@ import (
 	"github.com/ko-da-k/github-developer-exporter/exporter"
 )
 
-func NewMetricsHandler() http.Handler {
-	exporter.RecordMetrics()
+func NewMetricsHandler(gs []*exporter.GitHubCollector) http.Handler {
+	exporter.RecordMetrics(gs)
 
 	return promhttp.Handler()
 }
