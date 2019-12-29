@@ -12,9 +12,16 @@ type Job struct {
 	orgName string
 }
 
+func NewJob(client *github.Client, orgName string) *Job {
+	return &Job{client, orgName}
+}
+
 func (j *Job) Execute(ctx context.Context) error {
 	if err := j.setCacheByOrg(ctx); err != nil {
 		return fmt.Errorf("failed to set %s org: %w", j.orgName, err)
+	}
+	if err := j.setCacheByRepo(ctx); err != nil {
+		return fmt.Errorf("failed to set repositories in %s org", j.orgName)
 	}
 	return nil
 }
@@ -47,30 +54,12 @@ func (j *Job) setCacheByOrg(ctx context.Context) error {
 	}
 	// send object to global cache Kv
 	Kv.Set(fmt.Sprintf("%s-repos", j.orgName), allRepos, cache.DefaultExpiration)
-
-	// fet members in the organization
-	memberOption := &github.ListMembersOptions{
-		ListOptions: github.ListOptions{PerPage: 100},
-	}
-	var allMembers []*github.User
-	for {
-		members, resp, err := j.client.Organizations.ListMembers(ctx, j.orgName, memberOption)
-		if err != nil {
-			return fmt.Errorf("failed to fetch members: %w", err)
-		}
-		allMembers = append(allMembers, members...)
-		if resp.NextPage == 0 {
-			break
-		}
-		memberOption.Page = resp.NextPage
-	}
-	Kv.Set(fmt.Sprintf("%s-members", j.orgName), allMembers, cache.DefaultExpiration)
 	return nil
 }
 
 func (j *Job) setCacheByRepo(ctx context.Context) error {
 	// read repositories from cache
-	ri, found := Kv.Get(fmt.Sprintf("%s-members", j.orgName))
+	ri, found := Kv.Get(fmt.Sprintf("%s-repos", j.orgName))
 	repos, ok := ri.([]*github.Repository)
 	if !found || !ok {
 		return fmt.Errorf("failed to read repositories from cache")

@@ -4,13 +4,8 @@ import (
 	"context"
 	"fmt"
 	"github.com/google/go-github/v28/github"
-	"github.com/patrickmn/go-cache"
 	"golang.org/x/oauth2"
 	"os"
-)
-
-var (
-	Kv *cache.Cache // save github data for api limit.
 )
 
 type GitHubCollector struct {
@@ -25,6 +20,10 @@ type collector interface {
 
 var _ collector = (*GitHubCollector)(nil)
 
+func NewGitHubCollector(org string) *GitHubCollector {
+	return &GitHubCollector{org}
+}
+
 func (g *GitHubCollector) GetOrg() (*github.Organization, error) {
 	oi, found := Kv.Get(g.org)
 	org, ok := oi.(*github.Organization)
@@ -38,7 +37,7 @@ func (g *GitHubCollector) GetOrg() (*github.Organization, error) {
 }
 
 func (g *GitHubCollector) GetReposByOrg() ([]*github.Repository, error) {
-	rsi, found := Kv.Get(fmt.Sprintf("%s-repos"))
+	rsi, found := Kv.Get(fmt.Sprintf("%s-repos", g.org))
 	repos, ok := rsi.([]*github.Repository)
 	if !found {
 		return nil, fmt.Errorf("%s repos not found in cache", g.org)
@@ -50,7 +49,7 @@ func (g *GitHubCollector) GetReposByOrg() ([]*github.Repository, error) {
 }
 
 func (g *GitHubCollector) GetPullsByRepo(repoName string) ([]*github.PullRequest, error) {
-	psi, found := Kv.Get(fmt.Sprintf("%s-%s-pulls"))
+	psi, found := Kv.Get(fmt.Sprintf("%s-%s-pulls", g.org, repoName))
 	pulls, ok := psi.([]*github.PullRequest)
 	if !found {
 		return nil, fmt.Errorf("%s/%s pull requests not found in cache", g.org, repoName)

@@ -2,15 +2,10 @@ package exporter
 
 import (
 	"github.com/prometheus/client_golang/prometheus"
-	log "github.com/sirupsen/logrus"
 )
 
-func RecordMetrics() {
-	c, err := NewDevCollector()
-	if err != nil {
-		log.Errorf("Collector Initialization Error: %v", err)
-		return
-	}
+func RecordMetrics(gs []*GitHubCollector) {
+	c := NewDevCollector(gs)
 	prometheus.MustRegister(c)
 	return
 }
