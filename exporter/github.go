@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"github.com/google/go-github/v28/github"
 	"golang.org/x/oauth2"
-	"os"
+
+	"github.com/ko-da-k/github-developer-exporter/config"
 )
 
 type GitHubCollector struct {
@@ -75,27 +76,17 @@ func (g *GitHubCollector) GetPullRequestsByRepo(repoName string) ([]*github.Pull
 
 // NewGitHubClient constructor
 func NewGitHubClient(ctx context.Context) (*github.Client, error) {
-	token := os.Getenv("GITHUB_TOKEN")
-	url := os.Getenv("GITHUB_URL")
-
-	if token == "" {
-		return nil, fmt.Errorf("token should be set in GITHIB_TOKEN environment value")
-	}
-	if url == "" {
-		url = "https://api.github.com/"
-	}
-
 	ts := oauth2.StaticTokenSource(
 		&oauth2.Token{
-			AccessToken: token,
+			AccessToken: config.GitHubConfig.Token,
 		},
 	)
 	tc := oauth2.NewClient(ctx, ts)
 
 	// TODO: because I mainly use gh:e
-	client, err := github.NewEnterpriseClient(url, url, tc)
+	client, err := github.NewEnterpriseClient(config.GitHubConfig.URL, config.GitHubConfig.URL, tc)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to initialize github client: %w", err)
 	}
 	return client, nil
 }

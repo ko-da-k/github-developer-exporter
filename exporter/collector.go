@@ -1,12 +1,13 @@
 package exporter
 
 import (
-	"github.com/google/go-github/v28/github"
-	"github.com/prometheus/client_golang/prometheus"
-	log "github.com/sirupsen/logrus"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/google/go-github/v28/github"
+	"github.com/prometheus/client_golang/prometheus"
+	log "github.com/sirupsen/logrus"
 )
 
 var (
