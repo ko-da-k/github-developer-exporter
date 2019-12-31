@@ -2,6 +2,7 @@ package exporter
 
 import (
 	"context"
+
 	log "github.com/sirupsen/logrus"
 )
 

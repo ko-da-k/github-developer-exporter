@@ -6,7 +6,9 @@ import (
 )
 
 type serverConfig struct {
-	Port int `default:"8888"`
+	Port      int `default:"8888"`
+	MaxWorker int `default:"2"`
+	MaxQueue  int `default:"5"`
 }
 
 type githubConfig struct {
@@ -14,7 +16,10 @@ type githubConfig struct {
 	Orgs  string `required:"true"`
 	// URL should be set for GitHub Enterprise
 	// e.g. https://<your-domain>/api/v3/
-	URL string `default:"https://api.github.com/`
+	URL string `default:"https://api.github.com/"`
+	// Interval we should set because of API rate limit
+	// ref: https://developer.github.com/v3/#rate-limiting
+	Interval float32 `default:"30"`
 }
 
 var (

@@ -1,10 +1,13 @@
 package exporter
 
 import (
+	"strconv"
+	"strings"
+	"time"
+
 	"github.com/google/go-github/v28/github"
 	"github.com/prometheus/client_golang/prometheus"
 	log "github.com/sirupsen/logrus"
-	"strconv"
 )
 
 var (
@@ -27,13 +30,22 @@ var (
 		"default_branch",
 		"archived",
 		"language",
-		"latest_release_tag_name",
-		"latest_released_at",
 		"created_at",
 		"updated_at",
 		"pushed_at",
 	}
-	pullsLabels = []string{
+	issueLabels = []string{
+		"org_name",
+		"repo_name",
+		"state",
+		"title",
+		"created_at",
+		"updated_at",
+		"closed_at",
+		"assignee",
+		"label",
+	}
+	pullRequestLabels = []string{
 		"org_name",
 		"repo_name",
 		"state",
@@ -43,6 +55,7 @@ var (
 		"closed_at",
 		"merged_at",
 		"assignee",
+		"reviewer",
 		"label",
 	}
 
@@ -89,22 +102,16 @@ var (
 		repoLabels,
 		nil,
 	)
-	repoCollaboratorCount = prometheus.NewDesc(
-		"repo_collaborator_count",
-		"How many collaborators are in the repository.",
-		repoLabels,
+	issueInfo = prometheus.NewDesc(
+		"issue_info",
+		"issue info",
+		issueLabels,
 		nil,
 	)
-	repoReleaseCount = prometheus.NewDesc(
-		"repo_release_count",
-		"How many releases are in the repository.",
-		repoLabels,
-		nil,
-	)
-	pullsInfo = prometheus.NewDesc(
-		"pulls_info",
-		"pulls info",
-		pullsLabels,
+	pullRequestInfo = prometheus.NewDesc(
+		"pull_request_info",
+		"pull request info",
+		pullRequestLabels,
 		nil,
 	)
 )
@@ -124,9 +131,7 @@ func (c *devCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- orgPrivateReposCount
 	ch <- repoInfo
 	ch <- repoOpenIssueCount
-	ch <- repoCollaboratorCount
-	ch <- repoReleaseCount
-	ch <- pullsInfo
+	ch <- pullRequestInfo
 }
 
 func (c *devCollector) Collect(ch chan<- prometheus.Metric) {
@@ -149,7 +154,7 @@ func (c *devCollector) collectOrgsMetrics(ch chan<- prometheus.Metric) bool {
 	for _, g := range c.gs {
 		org, err := g.GetOrg()
 		if err != nil {
-			log.Errorf("%s data not found", g.org)
+			log.Errorf("%s data not found: %v", g.org, err)
 			return false
 		}
 		labels := []string{
@@ -170,7 +175,7 @@ func (c *devCollector) collectOrgsMetrics(ch chan<- prometheus.Metric) bool {
 
 		repos, err := g.GetReposByOrg()
 		if err != nil {
-			log.Errorf("%s repos not found", g.org)
+			log.Errorf("%s repos not found: %v", g.org, err)
 			return false
 		}
 		ch <- prometheus.MustNewConstMetric(
@@ -181,6 +186,8 @@ func (c *devCollector) collectOrgsMetrics(ch chan<- prometheus.Metric) bool {
 		)
 		publicCnt := 0.0
 		privateCnt := 0.0
+
+		// set repository metrics in this loop
 		for _, repo := range repos {
 			if repo.GetPrivate() {
 				privateCnt++
@@ -189,9 +196,19 @@ func (c *devCollector) collectOrgsMetrics(ch chan<- prometheus.Metric) bool {
 			}
 			c.setRepoMetrics(ch, repo)
 
-			pulls, err := g.GetPullsByRepo(repo.GetName())
+			// set issue metrics in this loop
+			issues, err := g.GetIssuesByRepo(repo.GetName())
 			if err != nil {
-				log.Errorf("%s/%s pull requests not found", g.org, repo.GetName())
+				log.Errorf("%s/%s issues not found: %v", g.org, repo.GetName(), err)
+			}
+			for _, issue := range issues {
+				c.setIssueMetrics(ch, g, repo.GetName(), issue)
+			}
+
+			// set pull request metrics in this loop
+			pulls, err := g.GetPullRequestsByRepo(repo.GetName())
+			if err != nil {
+				log.Errorf("%s/%s pull requests not found: %v", g.org, repo.GetName(), err)
 			}
 			for _, pull := range pulls {
 				c.setPullRequestMetrics(ch, g, repo.GetName(), pull)
@@ -224,8 +241,6 @@ func (c *devCollector) setRepoMetrics(ch chan<- prometheus.Metric, repo *github.
 		repo.GetDefaultBranch(),
 		strconv.FormatBool(repo.GetArchived()),
 		repo.GetLanguage(),
-		"latest_release_tag_name",
-		"latest_release_at",
 		repo.GetCreatedAt().String(),
 		repo.GetUpdatedAt().String(),
 		repo.GetPushedAt().String(),
@@ -242,42 +257,52 @@ func (c *devCollector) setRepoMetrics(ch chan<- prometheus.Metric, repo *github.
 		float64(repo.GetOpenIssuesCount()),
 		labels...,
 	)
+}
+
+func (c *devCollector) setIssueMetrics(ch chan<- prometheus.Metric, g *GitHubCollector, repoName string, issue *github.Issue) {
+	// set label string to prometheus label value
+	// labelName contains multiple labels connected by comma.
+	labelArr := make([]string, len(issue.Labels))
+	for i, label := range issue.Labels {
+		labelArr[i] = label.GetName()
+	}
+	labelName := strings.Join(labelArr, ",")
+	labels := []string{
+		g.org,
+		repoName,
+		issue.GetState(),
+		issue.GetTitle(),
+		issue.GetCreatedAt().String(),
+		issue.GetUpdatedAt().String(),
+		formatTime(issue.GetClosedAt()),
+		issue.GetAssignee().GetLogin(),
+		labelName,
+	}
 	ch <- prometheus.MustNewConstMetric(
-		repoCollaboratorCount,
+		issueInfo,
 		prometheus.GaugeValue,
-		1.0, // TODO
-		labels...,
-	)
-	ch <- prometheus.MustNewConstMetric(
-		repoReleaseCount,
-		prometheus.GaugeValue,
-		1.0, // TODO
+		1.0,
 		labels...,
 	)
 }
 
 func (c *devCollector) setPullRequestMetrics(ch chan<- prometheus.Metric, g *GitHubCollector, repoName string, pull *github.PullRequest) {
-	for _, label := range pull.Labels {
-		labels := []string{
-			g.org,
-			repoName,
-			pull.GetState(),
-			pull.GetTitle(),
-			pull.GetCreatedAt().String(),
-			pull.GetUpdatedAt().String(),
-			pull.GetClosedAt().String(),
-			pull.GetMergedAt().String(),
-			pull.GetAssignee().GetLogin(),
-			label.GetName(),
-		}
-		ch <- prometheus.MustNewConstMetric(
-			pullsInfo,
-			prometheus.GaugeValue,
-			1.0,
-			labels...,
-		)
+	// set label string to prometheus label value
+	// labelname contains multiple labels connected by comma.
+	labelArr := make([]string, len(pull.Labels))
+	for i, label := range pull.Labels {
+		labelArr[i] = label.GetName()
 	}
-	// use "" if you would query for all pulls/
+	labelName := strings.Join(labelArr, ",")
+
+	// set reviewer string to prometheus label value
+	// reviewers contains multiple reviewers connected by comma.
+	reviewerArr := make([]string, len(pull.RequestedReviewers))
+	for i, reviewer := range pull.RequestedReviewers {
+		reviewerArr[i] = reviewer.GetLogin()
+	}
+	reviewers := strings.Join(reviewerArr, ",")
+
 	labels := []string{
 		g.org,
 		repoName,
@@ -285,15 +310,24 @@ func (c *devCollector) setPullRequestMetrics(ch chan<- prometheus.Metric, g *Git
 		pull.GetTitle(),
 		pull.GetCreatedAt().String(),
 		pull.GetUpdatedAt().String(),
-		pull.GetClosedAt().String(),
-		pull.GetMergedAt().String(),
+		formatTime(pull.GetClosedAt()),
+		formatTime(pull.GetMergedAt()),
 		pull.GetAssignee().GetLogin(),
-		"",
+		reviewers,
+		labelName,
 	}
 	ch <- prometheus.MustNewConstMetric(
-		pullsInfo,
+		pullRequestInfo,
 		prometheus.GaugeValue,
 		1.0,
 		labels...,
 	)
+}
+
+// formatTime returns empty if t is zero
+func formatTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.String()
 }

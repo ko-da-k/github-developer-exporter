@@ -3,8 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/ko-da-k/github-developer-exporter/exporter"
-	log "github.com/sirupsen/logrus"
 	"net/http"
 	"os"
 	"os/signal"
@@ -12,7 +10,10 @@ import (
 	"syscall"
 	"time"
 
+	log "github.com/sirupsen/logrus"
+
 	"github.com/ko-da-k/github-developer-exporter/config"
+	"github.com/ko-da-k/github-developer-exporter/exporter"
 	"github.com/ko-da-k/github-developer-exporter/handlers"
 )
 
@@ -32,7 +33,7 @@ func main() {
 	d.Start(ctx) // start background job queue and worker
 
 	// setting exporter and job initialization
-	orgs := strings.Split(os.Getenv("GITHUB_ORGS"), ",")
+	orgs := strings.Split(config.GitHubConfig.Orgs, ",")
 	jobs := make([]*exporter.Job, len(orgs))
 	collectors := make([]*exporter.GitHubCollector, len(orgs))
 	for i, org := range orgs {
@@ -44,7 +45,9 @@ func main() {
 		for _, job := range jobs {
 			d.Add(job)
 		}
-		ticker := time.NewTicker(25 * time.Minute)
+		ticker := time.NewTicker(
+			time.Duration(config.GitHubConfig.Interval) * time.Minute,
+		)
 		defer ticker.Stop()
 		for {
 			select {

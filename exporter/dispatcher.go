@@ -4,24 +4,10 @@ import (
 	"context"
 	"sync"
 
-	"github.com/kelseyhightower/envconfig"
 	log "github.com/sirupsen/logrus"
+
+	"github.com/ko-da-k/github-developer-exporter/config"
 )
-
-type config struct {
-	MaxWorker int `default:"2"`
-	MaxQueue  int `default:"5"`
-}
-
-var (
-	Config config
-)
-
-func init() {
-	if err := envconfig.Process("", &Config); err != nil {
-		log.Errorf("failed to load environment variable")
-	}
-}
 
 type Dispatcher struct {
 	workerPool chan struct{}
@@ -31,8 +17,8 @@ type Dispatcher struct {
 }
 
 func NewDispatcher(worker Worker) *Dispatcher {
-	pool := make(chan struct{}, Config.MaxWorker)
-	queue := make(chan *Job, Config.MaxQueue)
+	pool := make(chan struct{}, config.ServerConfig.MaxWorker)
+	queue := make(chan *Job, config.ServerConfig.MaxQueue)
 	return &Dispatcher{
 		pool,
 		queue,

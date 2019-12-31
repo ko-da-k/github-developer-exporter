@@ -1,8 +1,11 @@
 package exporter
 
 import (
-	"github.com/patrickmn/go-cache"
 	"time"
+
+	"github.com/patrickmn/go-cache"
+
+	"github.com/ko-da-k/github-developer-exporter/config"
 )
 
 var (
@@ -11,5 +14,9 @@ var (
 )
 
 func init() {
-	Kv = cache.New(30*time.Minute, 35*time.Minute)
+	Kv = cache.New(
+		// add more 3 minutes to prevent nil response
+		time.Duration(config.GitHubConfig.Interval+3)*time.Minute,
+		time.Duration(config.GitHubConfig.Interval+3)*time.Minute,
+	)
 }
