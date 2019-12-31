@@ -64,6 +64,18 @@ func (j *Job) setCacheByRepo(ctx context.Context) error {
 	if !found || !ok {
 		return fmt.Errorf("failed to read repositories from cache")
 	}
+
+	// fetch issues in the repository
+	issueListOption := &github.IssueListByRepoOptions{
+		State:     "all",
+		Sort:      "created",
+		Direction: "desc",
+		ListOptions: github.ListOptions{
+			Page:    1,
+			PerPage: 100,
+		},
+	}
+
 	// fetch pull requests in the repository
 	prListOption := &github.PullRequestListOptions{
 		State:     "all",
@@ -73,7 +85,7 @@ func (j *Job) setCacheByRepo(ctx context.Context) error {
 		Direction: "desc",
 		ListOptions: github.ListOptions{
 			Page:    1,
-			PerPage: 20, // Limited
+			PerPage: 100, // Limited
 		},
 	}
 	for _, repo := range repos {
@@ -84,6 +96,21 @@ func (j *Job) setCacheByRepo(ctx context.Context) error {
 			return fmt.Errorf("Failed to fetch %s pulls: %w", repo.GetName(), err)
 		}
 		Kv.Set(fmt.Sprintf("%s-%s-pulls", j.orgName, repo.GetName()), pulls, cache.DefaultExpiration)
+
+		issues := make([]*github.Issue, 0)
+		allIssue, _, err := j.client.Issues.ListByRepo(ctx, j.orgName, repo.GetName(), issueListOption)
+		if _, ok := err.(*github.RateLimitError); ok {
+			return fmt.Errorf("Access Rate Limit: %w", err)
+		} else if err != nil {
+			return fmt.Errorf("Failed to fetch %s issues: %w", repo.GetName(), err)
+		}
+		// filter by issues not pull requests
+		for _, issue := range allIssue {
+			if !issue.IsPullRequest() {
+				issues = append(issues, issue)
+			}
+		}
+		Kv.Set(fmt.Sprintf("%s-%s-issues", j.orgName, repo.GetName()), issues, cache.DefaultExpiration)
 	}
 	return nil
 }

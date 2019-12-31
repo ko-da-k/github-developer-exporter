@@ -15,7 +15,8 @@ type GitHubCollector struct {
 type collector interface {
 	GetOrg() (*github.Organization, error)
 	GetReposByOrg() ([]*github.Repository, error)
-	GetPullsByRepo(repoName string) ([]*github.PullRequest, error)
+	GetIssuesByRepo(repoName string) ([]*github.Issue, error)
+	GetPullRequestsByRepo(repoName string) ([]*github.PullRequest, error)
 }
 
 var _ collector = (*GitHubCollector)(nil)
@@ -48,7 +49,19 @@ func (g *GitHubCollector) GetReposByOrg() ([]*github.Repository, error) {
 	return repos, nil
 }
 
-func (g *GitHubCollector) GetPullsByRepo(repoName string) ([]*github.PullRequest, error) {
+func (g *GitHubCollector) GetIssuesByRepo(repoName string) ([]*github.Issue, error) {
+	ii, found := Kv.Get(fmt.Sprintf("%s-%s-issues", g.org, repoName))
+	issues, ok := ii.([]*github.Issue)
+	if !found {
+		return nil, fmt.Errorf("%s/%s issues not found in cache", g.org, repoName)
+	}
+	if !ok {
+		return nil, fmt.Errorf("type conversion failed")
+	}
+	return issues, nil
+}
+
+func (g *GitHubCollector) GetPullRequestsByRepo(repoName string) ([]*github.PullRequest, error) {
 	psi, found := Kv.Get(fmt.Sprintf("%s-%s-pulls", g.org, repoName))
 	pulls, ok := psi.([]*github.PullRequest)
 	if !found {
