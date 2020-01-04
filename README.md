@@ -21,6 +21,18 @@ We can visualize time-series `Organization`, `Repository`, `Issue` or `Pull Requ
 This exporter is written in [Go](https://golang.org/), making it easy to build and deploy as a static binary.
 You can clone this repository and build yourself or pull image from [DockerHub](https://hub.docker.com/repository/docker/kyobad/github-developer-exporter).
 
+# Environment Variable
+
+| Name | Description |
+| :--- | :--- |
+| PORT | server port. default: 8888 |
+| MAX_WORKER | background worker num. default: 2 |
+| MAX_QUEUE | background queue size. default: 5 |
+| GITHUB_TOKEN | token for GitHub API. |
+| GITHUB_ORGS | organization name. if you want to check multiple organizations, you can set them with comma. e.g. "hoge,fuga" |
+| GITHUB_URL | If GH:E, you should set your gh:e endpoint. default: https://api.github.com/ |
+| GITHUB_INTERVAL | you should set it becaulse of API rate limit. default: 30 (minute) |
+
 # Metrics
 
 | Metric name | Metric type | Labels/tags | Status
