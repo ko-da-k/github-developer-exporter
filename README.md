@@ -19,6 +19,7 @@ We can visualize time-series `Organization`, `Repository`, `Issue` or `Pull Requ
 # Installation
 
 This exporter is written in [Go](https://golang.org/), making it easy to build and deploy as a static binary.
+You can clone this repository and build yourself or pull image from [DockerHub](https://hub.docker.com/repository/docker/kyobad/github-developer-exporter).
 
 # Metrics
 
