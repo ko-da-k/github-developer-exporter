@@ -9,7 +9,7 @@ Unbalanced assign of issues and of reviews makes them less productive.
 And we have no solution or tool to track time-series task assignee or requested reviewers.
 So we create it to check developer team conditions through time-series analysis via prometheus.
 
-# What I can do
+# What we can do with this exporter
 
 We can visualize time-series `Organization`, `Repository`, `Issue` or `Pull Request` with labels as a Prometheus Exporter.
 
